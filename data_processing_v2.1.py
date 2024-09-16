@@ -228,8 +228,8 @@ def process_diff_output(repo,diff_output):
 
 def main():
     base_path1='E:\\clone_diff' #存放所有仓库的地方，一般是硬盘的目录
-    output_file = "E:\\dachuang2024\\data\\output.csv"#输出文件
-    input_csv = "E:\\dachuang2024\\data\\input.csv"#输入文件
+    output_file = "data\\output.csv"#输出文件
+    input_csv = "data\\veracode_fliter.csv.csv"#输入文件
     # 表头
     header = ['index', 'cwe key word', 'matched key word', 'file', 'func', 'hunk', 'function_name', 'note', 'repo', 'branch', 'url','testcase']
     urls = []
@@ -257,7 +257,7 @@ def main():
             
             branch = get_current_branch(base_path1 + '\\' + repo) #获取当前分支名
             
-            # os.chdir(os.path.join(base_path1, repo)) #改变当前工作目录到仓库的本地克隆目录
+            os.chdir(os.path.join(base_path1, repo)) #改变当前工作目录到仓库的本地克隆目录
             diff_command = f'git diff {commit_hash}^..{commit_hash}'  # 注意添加了空格
             diff_output = subprocess.run(['powershell', '-Command', diff_command], capture_output=True, text=True, encoding='utf-8').stdout
                 #如果git diff命令的输出为空，从网络获取
