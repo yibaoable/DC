@@ -6,16 +6,34 @@ import os
 import subprocess #用来执行powershell命令并把输出重定向
 
 def has_test_case(line):
-    # diff中是否有test文件
+    """
+    检查给定的diff输出行是否包含测试文件。
+
+    参数:
+        line (str): diff输出中的一行。
+
+    返回:
+        bool: 如果该行表示一个测试文件，则返回True，否则返回False。
+    """
     assert isinstance(line, str)
     pattern = "^diff --git.*Test.*$"
-    return bool(re.match(pattern, line, re.IGNORECASE))#忽略大小写
+    return bool(re.match(pattern, line, re.IGNORECASE))  # 忽略大小写
 
 #统计仓库中test文件数量
+#对这个函数的意义成疑问
 def count_test_files(repo_path):
+    """
+    统计仓库中测试文件的数量。
+
+    参数:
+        repo_path (str): 仓库的路径。
+
+    返回:
+        bool: 如果仓库中包含测试文件，返回True，否则返回False。
+    """
     # 定义测试文件的标志，比如文件名中包含 'test'，或位于 'tests' 目录
     test_keywords = ['test', 'tests']
-    
+
     test_file_count = 0
 
     # 遍历目录和文件
@@ -33,6 +51,8 @@ def count_test_files(repo_path):
 def get_current_branch(repo_path):
     try:
         # 使用 git 命令获取当前分支名
+        #为什么这么写   肯定不是获取当前branch啊，而是根据commit修改获取branch
+        #git branch --contains abcd1234
         result = subprocess.run(
             ["git", "branch", "--show-current"],
             cwd=repo_path,           # 指定仓库路径
@@ -53,6 +73,15 @@ def get_current_branch(repo_path):
         return None
 
 def extract_commit_hash(url):
+    """
+    从给定的URL中提取提交哈希值。
+
+    参数:
+        url (str): 包含提交哈希值的URL。
+
+    返回:
+        str: 提取的提交哈希值，如果未找到则返回None。
+    """
     # 匹配 commit_hash
     match = re.search(r'/commit/([^/#]+)', url)
     if match:
@@ -61,14 +90,28 @@ def extract_commit_hash(url):
     else:
         return None
 
+
+
+
+#这个函数的diff_line输入有一定问题啊
 def extract_modified_functions(diff_lines):
+    """
+        提取给定diff输出中的修改函数名称。
+
+        参数:
+            diff_lines (list): 包含diff输出的行列表。
+
+        返回:
+            list: 修改的函数名称列表。
+        """
     # 寻找func
     function_name = None
     functions_list = []
     # open_braces = 0 # 追踪大括号的层次
-    
+
     # 匹配函数定义行的正则表达式
     function_general = re.compile(r'@@.*?@@\s*(.+)\s*\(')
+    #捕获函数返回值，函数名，参数
     function_pattern = re.compile(r'\b(?:public|private|protected|static|final|synchronized|abstract|native)?\s*(\w+(\[\])?)\s+(\w+)\s*\(.*?\)\s*\{')
 
     # 记录当前是否处于修改块中
@@ -76,8 +119,9 @@ def extract_modified_functions(diff_lines):
     get_func = False
 
     for i, line in enumerate(diff_lines):
+        #这个逻辑不对，不应该是只从+或-开始搜索，而是需要确认是一个有效的修改块后在开始搜索
         if  ((line.startswith("+") == True and line.startswith("+++") == False) or (line.startswith("-") == True and line.startswith("---") == False)):
-            in_modified_block = True 
+            in_modified_block = True
             get_func = False #是否找到函数
 
             # 向上查找函数名
@@ -91,21 +135,24 @@ def extract_modified_functions(diff_lines):
                 if function_match:
                     get_func = True
                     function_name = function_match.group(1).strip()
+                    #其实function_name not in functions_list是可以不要的，这点要子超确认
                     if function_name and function_name not in functions_list:
                         functions_list.append(function_name)
                     break  # 找到函数名，停止向上查找
-                
+
+                #这一块代码可能并不需要
                 # 如果遇到另一个修改块，说明是同一个函数内的修改，停止向上查找
                 if  ((prev_line.startswith("+") == True and prev_line.startswith("+++") == False) or (prev_line.startswith("-") == True and prev_line.startswith("---") == False)):
                     get_func = True
                     in_modified_block = False
                     break
-                
+
                 # 如果一直找到@@还没找到函数，则在@@后的函数里
-                if function_match_general and get_func==0: 
+                if function_match_general and get_func==0:
                     get_func = True
                     in_modified_block = False # 遇到@@说明hunk块一定结束了
                     function_name = function_match_general.group(1).strip()
+                    #待确认
                     if function_name and function_name not in functions_list:
                         functions_list.append(function_name)
                     break  # 找到函数名，停止向上查找
@@ -150,6 +197,8 @@ def process_diff_output(repo,diff_output):
         # 检测是否是test文件
             if has_test_case(line) == False:
                 file_count += 1
+
+                #这个判定不是很准确吧，个人感觉制用检查java拓展名， 其他的jsp什么的直接过滤掉，xml更加应该直接删去
                 if filename.endswith(".java") or filename.endswith(".jsp") or filename.endswith(".jspx") or filename.endswith(".xml"):#只检测JAVA文件
                     java_file_count += 1
                 else:
@@ -165,9 +214,12 @@ def process_diff_output(repo,diff_output):
         # 不是修改行
         if (line.startswith('+') == 0) and (line.startswith('-') == 0):
             is_change = 0
+
+
         # 是修改行
         if  ((line.startswith("+") == True and line.startswith("+++") == False) 
             or (line.startswith("-") == True and line.startswith("---") == False)) and (is_change == 0):
+            #这里的pass应该是continue把
             # 是import
             if (line.find("import") != -1) :
                 pass
@@ -190,6 +242,7 @@ def process_diff_output(repo,diff_output):
             elif (len(line) == 1):
                 pass
             # 跳过空语句
+            #这个判定应该是不对的，line.strip()去掉空格后无论如何line中也还是有+或-的
             elif (len(line.strip()) == 0):
                 # 跳过空行或者只包含空白字符的行
                 pass
@@ -204,12 +257,13 @@ def process_diff_output(repo,diff_output):
                 hunk = hunk + 1
     # 寻找test          
     if(have_test == 0) :
+        #为什么要这么寻找test，test应该是只在diff中寻找就好了
         base_path='E:\\github_clone_repositories'
         is_test_case = count_test_files(os.path.join(base_path, repo))#判断仓库是否有test文件
     else:
         is_test_case = 1
 
-    #统计func
+    #统计func，这里是把diff的所有输出全部输入给函数，然后返回函数名
     funcset = extract_modified_functions(lines)
     func_count = len(funcset)
     note = ""  # 默认注释为空，后期人工检查时可填
