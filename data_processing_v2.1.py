@@ -51,20 +51,28 @@ def count_test_files(repo_path):
     
 #获取当前分支名
 def get_branches_containing_commit(repo_path, commit_hash):
-    # 切换到目标仓库的路径
-    os.chdir(repo_path)
-    if not os.path.exists(os.path.join(repo_path, ".git")):
-        print(f"Error: {repo_path} is not a valid git repository")
+    # 检查仓库路径是否存在
+    if not os.path.exists(repo_path):
+        print(f"Error: {repo_path} does not exist")
         return []
+    else:
+        os.chdir(repo_path)
+    
     # 执行 git branch --contains 命令
     try:
-        result = subprocess.run(['git', 'branch', '-a','--contains', commit_hash],
+        result = subprocess.run(['git', 'branch', '-a', '--contains', commit_hash],
                                 capture_output=True, text=True, check=True)
         branches = result.stdout.strip().split("\n")
         branches = [branch.strip().replace("* ", "") for branch in branches]  # 去掉当前分支的星号
         return branches
     except subprocess.CalledProcessError as e:
-        print(f"Error running git branch: {e}")
+        error_message = e.stderr.strip()
+        
+        # 检查是否是 "no such commit" 错误
+        if "no such commit" in error_message:
+            print(f"该提交 {commit_hash} 所在的分支已经被移除")
+        else:
+            print(f"Error running git branch: {e}")
         return []
     
 def extract_commit_hash(url):
@@ -305,17 +313,30 @@ def clone_repository(url, output_dir):
         repo = re.search(r'[^/]+$', repository_name).group()
         # 构造仓库地址
         repository_url = f"https://{access_token}@github.com/{repository_name}"
-        #print(repo)
-        # 检查目录下是否已经存在该仓库
-        if os.path.exists(os.path.join(output_dir, repo)):
-            #print(f"Repository {repo} already exists, skipping...")
-            return
-        # 在指定目录下执行git clone命令
-        subprocess.run(["git", "clone", repository_url])
-        print(f"Successfully cloned {url}")
-        print(repository_name)
-        # 延迟一段时间，避免频繁请求
-        time.sleep(2)  # 可根据需要调整延迟时间
+        api_url = f"https://api.github.com/repos/{repository_name}"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        response = requests.get(api_url, headers=headers)
+
+        if response.status_code == 200:
+            # url有效
+            # 检查目录下是否已经存在该仓库
+            if os.path.exists(os.path.join(output_dir, repo)):
+                #print(f"Repository {repo} already exists, skipping...")
+                return
+            # 在指定目录下执行git clone命令
+            subprocess.run(["git", "clone", repository_url])
+            print(f"Successfully cloned {url}")
+            print(repository_name)
+            # 延迟一段时间，避免频繁请求
+            time.sleep(2)  # 可根据需要调整延迟时间
+            return True
+        else:
+        #response.status_code == 404:
+            return False
+        
     except Exception as e:
         print(f"Error cloning {url}: {e}")
         
@@ -331,10 +352,10 @@ def main():
     with open(input_csv) as csvfile:
         reader = csv.reader(csvfile)
         urls = [row[3] for row in reader]
-    os.chdir(base_path1)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for url in urls:
-            executor.submit(clone_repository,url,base_path1)
+    #  os.chdir(base_path1)
+    # with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    #     for url in urls:
+    #         executor.submit(clone_repository,url,base_path1)
 
     # CSV 文件写入
     with open(output_file, mode='w', newline='', encoding='utf-8') as f:
@@ -347,21 +368,46 @@ def main():
         
         for index, url in enumerate(urls, start=1):
             # 获取diff内容diff_output
-            commit_hash = extract_commit_hash(url)
-            repository_name = re.search(r'/([^/]+/[^/]+)/commit/', url).group(1) # 获取user/repo
-            repo = re.search(r'[^/]+$', repository_name).group() #获取repo
+            match = re.search(r'/([^/]+/[^/]+)/commit/', url)
+    
+            if not match:
+                
+                result = {
+                'index': index,
+                'cwe key word': cwe_key_word,
+                'matched key word': matched_key_word,
+                'file': '0',
+                'func': '0',
+                'hunk': '0',
+                'function_name': '',
+                'note': "",  # 人工标注
+                'repo': '',
+                'branch': '',
+                'url': url,
+                'testcase': ''  
+                }
+                writer.writerow(result)
+                continue
+            
+            repository_name = match.group(1)
             # note = get_commit_subject(commit_hash,repo) #获取commit的subject
-
+        
+                
+            commit_hash = extract_commit_hash(url)
+            os.chdir(base_path1)
+            if clone_repository(url, base_path1) == False:
+                continue#对应的url链接已经被删除不输出，共20条
+            repo = re.search(r'[^/]+$', repository_name).group() #获取repo
             repo_path = os.path.join(base_path1, repo) #获取仓库的本地克隆目录
             branch = get_branches_containing_commit(repo_path, commit_hash) #获取分支名
             
             # os.chdir(os.path.join(base_path1, repo)) #改变当前工作目录到仓库的本地克隆目录
             diff_command = f'git diff {commit_hash}^..{commit_hash}'  # 注意添加了空格
-            diff_output = subprocess.run(['powershell', '-Command', diff_command], capture_output=True, text=True, encoding='utf-8').stdout
+            diff_output = subprocess.run(['powershell', '-Command', diff_command], capture_output=True, text=True, encoding='utf-8',errors='ignore' ).stdout
                 #如果git diff命令的输出为空，从网络获取
             
-            if len(diff_output) < 1:
-                print("the repo local is bad")
+            if diff_output is None or len(diff_output) < 1:
+                print("the repo"+repo+" local is bad")
                 diff_url = url + '.diff'
                 res = requests.get(diff_url).text
                 if res != None:
